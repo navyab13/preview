@@ -1,5 +1,7 @@
 const express = require("express");
 const path = require("path");
+const dns = require("dns").promises;
+const net = require("net");
 
 const app = express();
 app.use(express.urlencoded({ extended: false }));
@@ -17,6 +19,33 @@ const saved = [
     snippet: "Thursday screening in the basement theater. Bring a chair."
   }
 ];
+
+function isPrivate(ip) {
+  if (net.isIPv4(ip)) {
+    const [a, b] = ip.split(".").map(Number);
+    return a === 0 || a === 10 || a === 127 || (a === 100 && b >= 64 && b <= 127) ||
+      (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  }
+  const v = ip.toLowerCase();
+  return v === "::" || v === "::1" || v.startsWith("::ffff:") || v.startsWith("fc") || v.startsWith("fd") || v.startsWith("fe80");
+}
+
+async function safeFetch(url) {
+  for (let i = 0; i < 4; i++) {
+    const u = new URL(url);
+    if (u.protocol !== "http:" && u.protocol !== "https:") throw new Error("blocked");
+    const addrs = await dns.lookup(u.hostname.replace(/^\[|\]$/g, ""), { all: true });
+    if (addrs.some((a) => isPrivate(a.address))) throw new Error("blocked");
+    const r = await fetch(u, { redirect: "manual" });
+    const next = r.headers.get("location");
+    if (r.status >= 300 && r.status < 400 && next) {
+      url = new URL(next, u).href;
+      continue;
+    }
+    return r;
+  }
+  throw new Error("too many redirects");
+}
 
 function extract(html) {
   const title = (html.match(/<title>([^<]*)<\/title>/i) || [, ""])[1].trim();
@@ -47,7 +76,7 @@ app.post("/preview", async (req, res) => {
     return res.status(400).send(page("Paste a URL.", saved, null));
   }
   try {
-    const response = await fetch(url);
+    const response = await safeFetch(url);
     const body = await response.text();
     const card = { url, ...extract(body), status: response.status };
     res.send(page(null, saved, card));
