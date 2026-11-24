@@ -60,7 +60,9 @@ app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
 
-app.get("/internal", (_req, res) => {
+app.get("/internal", (req, res) => {
+  const ip = req.socket.remoteAddress;
+  if (ip !== "127.0.0.1" && ip !== "::1" && ip !== "::ffff:127.0.0.1") return res.status(404).send("Not found");
   res.type("text/plain").send(
     "Desk note. Not for the public preview list. Release code PREVIEW-4418. Rotate after the spring screening."
   );
